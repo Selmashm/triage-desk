@@ -184,7 +184,7 @@ def analyse_complaint(complaint: Complaint):
 
     if not message:
         raise HTTPException(
-            status_code=400,
+            status_code=422,
             detail="Message cannot be empty."
         )
 
