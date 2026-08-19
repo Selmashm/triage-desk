@@ -5,6 +5,7 @@ from datetime import datetime
 
 from dotenv import load_dotenv
 from fastapi import FastAPI, HTTPException
+from fastapi.middleware.cors import CORSMiddleware
 from huggingface_hub import InferenceClient
 from pydantic import BaseModel, Field
 
@@ -16,6 +17,15 @@ from pydantic import BaseModel, Field
 load_dotenv()
 
 app = FastAPI(title="Triage Desk API")
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=[
+        "http://localhost:5173",
+    ],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
 
 HF_TOKEN = os.getenv("HF_TOKEN")
 
