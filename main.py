@@ -10,19 +10,20 @@ from huggingface_hub import InferenceClient
 from pydantic import BaseModel, Field
 
 
-# --------------------------------------------------
+# ==================================================
 # SETUP
-# --------------------------------------------------
+# ==================================================
 
 load_dotenv()
 
 app = FastAPI(title="Triage Desk API")
+
 app.add_middleware(
     CORSMiddleware,
     allow_origins=[
-            "http://localhost:5173",
-            "http://localhost:5174",
-            "http://localhost:5175",
+        "http://localhost:5173",
+        "http://localhost:5174",
+        "http://localhost:5175",
     ],
     allow_credentials=True,
     allow_methods=["*"],
@@ -41,14 +42,15 @@ MODEL = "Qwen/Qwen2.5-72B-Instruct"
 DATABASE = "triage.db"
 
 
-# --------------------------------------------------
+# ==================================================
 # DATABASE
-# --------------------------------------------------
+# ==================================================
 
 def init_database():
     connection = sqlite3.connect(DATABASE)
 
-    connection.execute("""
+    connection.execute(
+        """
         CREATE TABLE IF NOT EXISTS analyses (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
             message TEXT NOT NULL,
@@ -57,7 +59,8 @@ def init_database():
             suggested_reply TEXT NOT NULL,
             created_at TEXT NOT NULL
         )
-    """)
+        """
+    )
 
     connection.commit()
     connection.close()
@@ -66,25 +69,38 @@ def init_database():
 init_database()
 
 
-# --------------------------------------------------
+# ==================================================
 # REQUEST MODEL
-# --------------------------------------------------
+# ==================================================
 
 class Complaint(BaseModel):
-    message: str = Field(..., min_length=1, max_length=5000)
+    message: str = Field(
+        ...,
+        min_length=1,
+        max_length=5000
+    )
 
 
-# --------------------------------------------------
+# ==================================================
 # AI ANALYSIS
-# --------------------------------------------------
+# ==================================================
 
 def analyse_with_ai(message: str):
+
     prompt = f"""
-You are a customer service triage assistant.
+You are a professional customer service triage assistant.
 
-Analyse the following customer complaint.
+Your job is to analyse the customer's complaint and classify it.
 
-Return ONLY valid JSON in exactly this format:
+Return ONLY valid JSON.
+
+Do not include:
+- Markdown
+- ```json
+- ``` 
+- Explanations outside the JSON
+
+Use exactly this structure:
 
 {{
     "category": "Delivery",
@@ -93,6 +109,7 @@ Return ONLY valid JSON in exactly this format:
 }}
 
 The category MUST be exactly one of:
+
 - Delivery
 - Payment
 - Product
@@ -101,15 +118,26 @@ The category MUST be exactly one of:
 - Other
 
 The urgency MUST be exactly one of:
+
 - Low
 - Medium
 - High
 
+The suggested reply should:
+- Be professional
+- Be polite
+- Show empathy
+- Directly address the customer's issue
+- Be concise
+- Ask for relevant information when necessary
+
 Customer complaint:
+
 {message}
 """
 
     try:
+
         response = client.chat_completion(
             model=MODEL,
             messages=[
@@ -123,7 +151,7 @@ Customer complaint:
 
         content = response.choices[0].message.content.strip()
 
-        # Remove markdown code fences if the model adds them
+        # Remove markdown code fences if returned by the AI
         if content.startswith("```"):
             content = content.replace("```json", "")
             content = content.replace("```", "")
@@ -131,7 +159,10 @@ Customer complaint:
 
         result = json.loads(content)
 
-        # Check that the AI returned the expected fields
+        # ------------------------------------------
+        # Validate fields
+        # ------------------------------------------
+
         required_fields = [
             "category",
             "urgency",
@@ -139,10 +170,16 @@ Customer complaint:
         ]
 
         for field in required_fields:
-            if field not in result:
-                raise ValueError(f"AI response is missing '{field}'")
 
-        # Check allowed category
+            if field not in result:
+                raise ValueError(
+                    f"AI response is missing '{field}'"
+                )
+
+        # ------------------------------------------
+        # Validate category
+        # ------------------------------------------
+
         allowed_categories = [
             "Delivery",
             "Payment",
@@ -153,9 +190,15 @@ Customer complaint:
         ]
 
         if result["category"] not in allowed_categories:
-            raise ValueError("AI returned an invalid category")
 
-        # Check allowed urgency
+            raise ValueError(
+                "AI returned an invalid category"
+            )
+
+        # ------------------------------------------
+        # Validate urgency
+        # ------------------------------------------
+
         allowed_urgencies = [
             "Low",
             "Medium",
@@ -163,20 +206,28 @@ Customer complaint:
         ]
 
         if result["urgency"] not in allowed_urgencies:
-            raise ValueError("AI returned an invalid urgency level")
+
+            raise ValueError(
+                "AI returned an invalid urgency level"
+            )
 
         return result
 
     except json.JSONDecodeError:
+
+        print("AI returned invalid JSON:", content)
+
         raise HTTPException(
             status_code=502,
             detail="The AI service returned an invalid response."
         )
 
     except HTTPException:
+
         raise
 
     except Exception as error:
+
         print("AI error:", error)
 
         raise HTTPException(
@@ -185,9 +236,9 @@ Customer complaint:
         )
 
 
-# --------------------------------------------------
+# ==================================================
 # ANALYSE ENDPOINT
-# --------------------------------------------------
+# ==================================================
 
 @app.post("/api/analyse")
 def analyse_complaint(complaint: Complaint):
@@ -195,21 +246,34 @@ def analyse_complaint(complaint: Complaint):
     message = complaint.message.strip()
 
     if not message:
+
         raise HTTPException(
             status_code=422,
             detail="Message cannot be empty."
         )
 
-    # Send complaint to AI
+    # ------------------------------------------
+    # Analyse using AI
+    # ------------------------------------------
+
     result = analyse_with_ai(message)
 
-    # Save result to database
+    # ------------------------------------------
+    # Save to database
+    # ------------------------------------------
+
     connection = sqlite3.connect(DATABASE)
 
     connection.execute(
         """
         INSERT INTO analyses
-        (message, category, urgency, suggested_reply, created_at)
+        (
+            message,
+            category,
+            urgency,
+            suggested_reply,
+            created_at
+        )
         VALUES (?, ?, ?, ?, ?)
         """,
         (
@@ -224,7 +288,10 @@ def analyse_complaint(complaint: Complaint):
     connection.commit()
     connection.close()
 
-    # Return result
+    # ------------------------------------------
+    # Return result to frontend
+    # ------------------------------------------
+
     return {
         "message": message,
         "category": result["category"],
@@ -233,14 +300,15 @@ def analyse_complaint(complaint: Complaint):
     }
 
 
-# --------------------------------------------------
+# ==================================================
 # HISTORY ENDPOINT
-# --------------------------------------------------
+# ==================================================
 
 @app.get("/api/history")
 def get_history():
 
     connection = sqlite3.connect(DATABASE)
+
     connection.row_factory = sqlite3.Row
 
     rows = connection.execute(
@@ -264,12 +332,13 @@ def get_history():
     }
 
 
-# --------------------------------------------------
+# ==================================================
 # HEALTH CHECK
-# --------------------------------------------------
+# ==================================================
 
 @app.get("/")
 def root():
+
     return {
         "message": "Triage Desk API is running"
     }
